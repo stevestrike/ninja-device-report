@@ -32,8 +32,3 @@ Single-file pipeline in `clean-ninja-export.py`:
 ### Input tolerance
 - Warns on missing columns but continues processing
 - Ignores extra input columns beyond the 17 kept
-
-## Key Reference Files
-- `SKILL.md` — comprehensive spec documenting all cleaning rules with examples; consult this when updating any cleaning logic
-- `Devices.csv` — sample input for manual testing
-- `example_output.xlsx` — reference output showing expected formatting and data transformations
