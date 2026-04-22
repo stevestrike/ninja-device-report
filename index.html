@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<!--
+  Ninja Device Report Converter
+  Converts NinjaRMM CSV exports to styled XLSX reports, entirely in-browser.
+
+  Deploy options:
+    GitHub Pages: enable Pages on the repo (Settings → Pages → /web folder)
+    Kinsta SFTP:  upload this file to any directory, e.g. /device-report/index.html
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ninja Device Report Converter</title>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsxjs.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f0f2f5;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 4px 24px rgba(0,0,0,.10);
+      padding: 2.5rem 3rem;
+      max-width: 540px;
+      width: 100%;
+    }
+
+    h1 {
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: #1a1a2e;
+      margin-bottom: .35rem;
+    }
+
+    .subtitle {
+      font-size: .9rem;
+      color: #666;
+      margin-bottom: 2rem;
+    }
+
+    #drop-zone {
+      border: 2.5px dashed #c0c8d8;
+      border-radius: 10px;
+      padding: 2.5rem 1.5rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+      position: relative;
+    }
+
+    #drop-zone.dragover {
+      border-color: #305496;
+      background: #eef2fb;
+    }
+
+    #drop-zone.has-file {
+      border-color: #305496;
+      border-style: solid;
+    }
+
+    #file-input {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+      width: 100%;
+      height: 100%;
+    }
+
+    .drop-icon {
+      font-size: 2.5rem;
+      margin-bottom: .75rem;
+      display: block;
+      color: #305496;
+    }
+
+    .drop-label {
+      font-size: 1rem;
+      font-weight: 600;
+      color: #1a1a2e;
+      margin-bottom: .3rem;
+    }
+
+    .drop-hint {
+      font-size: .82rem;
+      color: #888;
+    }
+
+    #file-name {
+      margin-top: .6rem;
+      font-size: .85rem;
+      color: #305496;
+      font-weight: 600;
+      min-height: 1.2em;
+    }
+
+    #convert-btn {
+      display: block;
+      width: 100%;
+      margin-top: 1.5rem;
+      padding: .85rem;
+      background: #305496;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .15s, opacity .15s;
+    }
+
+    #convert-btn:hover:not(:disabled) { background: #23407a; }
+    #convert-btn:disabled { opacity: .55; cursor: not-allowed; }
+
+    #status {
+      margin-top: 1.2rem;
+      font-size: .88rem;
+      min-height: 1.4em;
+      text-align: center;
+      border-radius: 6px;
+      padding: .5rem .75rem;
+    }
+
+    #status.info  { background: #eef2fb; color: #305496; }
+    #status.ok    { background: #eafaf1; color: #1e7e4a; }
+    #status.error { background: #fdf0f0; color: #c0392b; }
+    #status.hidden { visibility: hidden; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <h1>Ninja Device Report Converter</h1>
+  <p class="subtitle">Drop a NinjaRMM CSV export below to get a clean, client-ready XLSX.</p>
+
+  <div id="drop-zone">
+    <input type="file" id="file-input" accept=".csv">
+    <span class="drop-icon">📂</span>
+    <p class="drop-label">Drag &amp; drop your CSV here</p>
+    <p class="drop-hint">or click to browse</p>
+    <div id="file-name"></div>
+  </div>
+
+  <button id="convert-btn" disabled>Convert to XLSX</button>
+  <div id="status" class="hidden"></div>
+</div>
+
+<script>
+'use strict';
+
+// ---------------------------------------------------------------------------
+// Column list — must match NinjaRMM export headers exactly
+// ---------------------------------------------------------------------------
+const KEEP_COLUMNS = [
+  "Organization",
+  "Location",
+  "Display Name",
+  "Type",
+  "Device Role",
+  "Policy",
+  "Last Update",
+  "Warranty Start Date_formatted",
+  "Warranty End Date_formatted",
+  "Last Login",
+  "Memory Capacity GiB",
+  "OS Name",
+  "System Name",
+  "Device Model",
+  "Serial Number",
+  "Processors Name",
+  "Volumes",
+];
+
+// ---------------------------------------------------------------------------
+// Cleaning functions (ported from clean-ninja-export.py)
+// ---------------------------------------------------------------------------
+
+function cleanSingleCpu(s) {
+  s = s.replace(/\([Rr]\)/g, "");
+  s = s.replace(/\([Tt][Mm]\)/g, "");
+  s = s.replace(/\bCPU\b/g, "");
+  s = s.replace(/@\s*\d+(?:\.\d+)?\s*[GM]Hz/gi, "");
+  s = s.replace(/\s+(?:with|w\/)\s+Radeon(?:\s+\w+)?\s+Graphics/gi, "");
+  s = s.replace(/\bProcessor\b/gi, "");
+  s = s.replace(/\s+/g, " ").trim();
+  s = s.replace(/[,;\s]+$/, "");
+  return s;
+}
+
+function cleanProcessor(raw) {
+  if (raw == null || raw === "") return "";
+  const s = String(raw).trim();
+  if (!s) return "";
+
+  const parts = s.split(",").map(p => p.trim()).filter(p => p);
+  const cleaned = parts.map(cleanSingleCpu);
+  if (!cleaned.length) return "";
+
+  const first = cleaned[0];
+  if (cleaned.every(p => p === first)) {
+    return cleaned.length > 1 ? `${cleaned.length}× ${first}` : first;
+  }
+  const seen = [];
+  for (const p of cleaned) { if (!seen.includes(p)) seen.push(p); }
+  return seen.join(", ");
+}
+
+function parseGib(value) {
+  if (!value) return null;
+  let m = String(value).match(/([\d.]+)\s*GiB/);
+  if (m) return parseFloat(m[1]);
+  m = String(value).match(/^\s*(\d+)\s*$/);
+  if (m) return parseInt(m[1], 10) / (1024 ** 3);
+  return null;
+}
+
+function formatVolume(kv) {
+  const capGib = parseGib(kv["Capacity"] || "");
+  const freeGib = parseGib(kv["Free"] || "");
+  const usage = (kv["Usage %"] || "").trim().replace(/%$/, "");
+  if (capGib === null) return "";
+  const capS = capGib.toFixed(1);
+  const freeS = freeGib !== null ? freeGib.toFixed(1) : "?";
+  return usage
+    ? `C: ${freeS} / ${capS} GiB free (${usage}% used)`
+    : `C: ${freeS} / ${capS} GiB free`;
+}
+
+function cleanVolumes(raw) {
+  if (raw == null || raw === "") return "";
+  const s = String(raw).trim();
+  if (!s) return "";
+
+  let candidates = s.split(/\s*\|\s*|\r?\n/);
+  if (candidates.length === 1) {
+    candidates = s.split(/(?=Name:\s*")/).filter(c => c.trim());
+  }
+
+  for (const chunk of candidates) {
+    const kv = {};
+    const re = /(\w[\w %]*?):\s*"([^"]*)"/g;
+    let m;
+    while ((m = re.exec(chunk)) !== null) kv[m[1]] = m[2];
+    if ((kv["Name"] || "").trim().toUpperCase().startsWith("C")) {
+      return formatVolume(kv);
+    }
+  }
+  return "";
+}
+
+function cleanOsName(raw) {
+  if (raw == null || raw === "") return "";
+  let s = String(raw).trim();
+  if (!s) return "";
+  s = s.replace(/\s+\d+(?:\.\d+){1,3}\s*$/, "");
+  s = s.replace(/^Microsoft\s+/i, "");
+  s = s.replace(/^Windows\b/, "Win");
+  return s.replace(/\s+/g, " ").trim();
+}
+
+const MEMORY_TIERS = [
+  1, 2, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512,
+  768, 1024, 1536, 2048, 3072, 4096,
+];
+
+function cleanMemory(raw) {
+  if (raw == null || raw === "") return "";
+  const val = parseFloat(raw);
+  if (isNaN(val)) return raw;
+  if (val <= 0) return 0;
+  for (const tier of MEMORY_TIERS) {
+    if (val <= tier && val >= tier * 0.95) return tier;
+  }
+  return MEMORY_TIERS.reduce((best, tier) =>
+    Math.abs(tier - val) < Math.abs(best - val) ? tier : best
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Processing pipeline
+// ---------------------------------------------------------------------------
+
+function processRows(rows) {
+  const headers = Object.keys(rows[0] || {});
+  const missing = KEEP_COLUMNS.filter(c => !headers.includes(c));
+  if (missing.length) console.warn("Missing columns (skipped):", missing);
+
+  const present = KEEP_COLUMNS.filter(c => headers.includes(c));
+
+  return rows.map(row => {
+    const out = {};
+    for (const col of present) out[col] = row[col] ?? "";
+
+    if (present.includes("Processors Name"))
+      out["Processors Name"] = cleanProcessor(out["Processors Name"]);
+    if (present.includes("Volumes"))
+      out["Volumes"] = cleanVolumes(out["Volumes"]);
+    if (present.includes("OS Name"))
+      out["OS Name"] = cleanOsName(out["OS Name"]);
+    if (present.includes("Memory Capacity GiB"))
+      out["Memory Capacity GiB"] = cleanMemory(out["Memory Capacity GiB"]);
+
+    return out;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// XLSX generation with full styling
+// ---------------------------------------------------------------------------
+
+const HEADER_STYLE = {
+  font:      { name: "Calibri", sz: 11, bold: true, color: { rgb: "FFFFFF" } },
+  fill:      { fgColor: { rgb: "305496" } },
+  border: {
+    top:    { style: "thin", color: { rgb: "BFBFBF" } },
+    bottom: { style: "thin", color: { rgb: "BFBFBF" } },
+    left:   { style: "thin", color: { rgb: "BFBFBF" } },
+    right:  { style: "thin", color: { rgb: "BFBFBF" } },
+  },
+  alignment: { horizontal: "left", vertical: "center" },
+};
+
+const BODY_STYLE = {
+  font:      { name: "Calibri", sz: 10 },
+  border: {
+    top:    { style: "thin", color: { rgb: "BFBFBF" } },
+    bottom: { style: "thin", color: { rgb: "BFBFBF" } },
+    left:   { style: "thin", color: { rgb: "BFBFBF" } },
+    right:  { style: "thin", color: { rgb: "BFBFBF" } },
+  },
+  alignment: { horizontal: "left", vertical: "top", wrapText: false },
+};
+
+function buildWorksheet(cleaned) {
+  if (!cleaned.length) return XLSX.utils.aoa_to_sheet([]);
+
+  const cols = Object.keys(cleaned[0]);
+  const colWidths = cols.map(c => c.length);
+
+  // Build AOA (array of arrays) for fast sheet creation
+  const aoa = [cols, ...cleaned.map(row => cols.map(c => row[c]))];
+
+  // Track max content width per column
+  cleaned.forEach(row => {
+    cols.forEach((c, i) => {
+      const len = String(row[c] ?? "").length;
+      if (len > colWidths[i]) colWidths[i] = len;
+    });
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+  // Apply styles cell-by-cell
+  const range = XLSX.utils.decode_range(ws["!ref"]);
+  for (let R = range.s.r; R <= range.e.r; R++) {
+    for (let C = range.s.c; C <= range.e.c; C++) {
+      const addr = XLSX.utils.encode_cell({ r: R, c: C });
+      if (!ws[addr]) ws[addr] = { v: "", t: "s" };
+      ws[addr].s = R === 0 ? HEADER_STYLE : BODY_STYLE;
+    }
+  }
+
+  // Freeze header row
+  ws["!freeze"] = { xSplit: 0, ySplit: 1 };
+
+  // Autofilter on header row
+  ws["!autofilter"] = { ref: ws["!ref"] };
+
+  // Column widths (capped at 45)
+  ws["!cols"] = colWidths.map(w => ({ wch: Math.min(Math.max(w + 2, 10), 45) }));
+
+  return ws;
+}
+
+function generateXlsx(cleaned, originalName) {
+  const ws = buildWorksheet(cleaned);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Devices");
+
+  const base = originalName.replace(/\.csv$/i, "");
+  XLSX.writeFile(wb, `${base}_cleaned.xlsx`);
+}
+
+// ---------------------------------------------------------------------------
+// UI wiring
+// ---------------------------------------------------------------------------
+
+const dropZone   = document.getElementById("drop-zone");
+const fileInput  = document.getElementById("file-input");
+const fileLabel  = document.getElementById("file-name");
+const convertBtn = document.getElementById("convert-btn");
+const statusEl   = document.getElementById("status");
+
+let selectedFile = null;
+
+function setStatus(msg, type) {
+  statusEl.textContent = msg;
+  statusEl.className = type;
+}
+
+function setFile(file) {
+  if (!file || !file.name.toLowerCase().endsWith(".csv")) {
+    setStatus("Please select a .csv file.", "error");
+    return;
+  }
+  selectedFile = file;
+  fileLabel.textContent = file.name;
+  dropZone.classList.add("has-file");
+  convertBtn.disabled = false;
+  statusEl.className = "hidden";
+}
+
+dropZone.addEventListener("dragover", e => {
+  e.preventDefault();
+  dropZone.classList.add("dragover");
+});
+dropZone.addEventListener("dragleave", () => dropZone.classList.remove("dragover"));
+dropZone.addEventListener("drop", e => {
+  e.preventDefault();
+  dropZone.classList.remove("dragover");
+  setFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener("change", () => setFile(fileInput.files[0]));
+
+convertBtn.addEventListener("click", () => {
+  if (!selectedFile) return;
+  setStatus("Reading CSV…", "info");
+  convertBtn.disabled = true;
+
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      setStatus("Processing…", "info");
+      const wb = XLSX.read(e.target.result, { type: "binary", raw: true });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+
+      if (!rows.length) {
+        setStatus("The CSV appears to be empty.", "error");
+        convertBtn.disabled = false;
+        return;
+      }
+
+      const cleaned = processRows(rows);
+      generateXlsx(cleaned, selectedFile.name);
+      setStatus(`Done — ${cleaned.length} device${cleaned.length !== 1 ? "s" : ""} exported.`, "ok");
+    } catch (err) {
+      console.error(err);
+      setStatus("Error: " + err.message, "error");
+    }
+    convertBtn.disabled = false;
+  };
+  reader.onerror = () => {
+    setStatus("Could not read file.", "error");
+    convertBtn.disabled = false;
+  };
+  reader.readAsBinaryString(selectedFile);
+});
+</script>
+</body>
+</html>
