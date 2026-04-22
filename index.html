@@ -164,10 +164,7 @@ const KEEP_COLUMNS = [
   "Organization",
   "Location",
   "Display Name",
-  "Type",
   "Device Role",
-  "Policy",
-  "Last Update",
   "Warranty Start Date_formatted",
   "Warranty End Date_formatted",
   "Last Login",
@@ -263,8 +260,26 @@ function cleanOsName(raw) {
   if (!s) return "";
   s = s.replace(/\s+\d+(?:\.\d+){1,3}\s*$/, "");
   s = s.replace(/^Microsoft\s+/i, "");
-  s = s.replace(/^Windows\b/, "Win");
+  s = s.replace(/\bProfessional Edition\b/gi, "Pro");
   return s.replace(/\s+/g, " ").trim();
+}
+
+function cleanDeviceRole(raw) {
+  if (raw == null || raw === "") return "";
+  const s = String(raw).trim();
+  if (/desktop/i.test(s)) return "Desktop";
+  if (/laptop/i.test(s)) return "Laptop";
+  return s;
+}
+
+function cleanDate(raw) {
+  if (raw == null || raw === "") return "";
+  const s = String(raw).trim();
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (m) return m[1];
+  const m2 = s.match(/^(\d{1,2}\/\d{1,2}\/\d{4})/);
+  if (m2) return m2[1];
+  return s;
 }
 
 const MEMORY_TIERS = [
@@ -300,6 +315,12 @@ function processRows(rows) {
     const out = {};
     for (const col of present) out[col] = row[col] ?? "";
 
+    if (present.includes("Device Role"))
+      out["Device Role"] = cleanDeviceRole(out["Device Role"]);
+    if (present.includes("Warranty Start Date_formatted"))
+      out["Warranty Start Date_formatted"] = cleanDate(out["Warranty Start Date_formatted"]);
+    if (present.includes("Warranty End Date_formatted"))
+      out["Warranty End Date_formatted"] = cleanDate(out["Warranty End Date_formatted"]);
     if (present.includes("Processors Name"))
       out["Processors Name"] = cleanProcessor(out["Processors Name"]);
     if (present.includes("Volumes"))
