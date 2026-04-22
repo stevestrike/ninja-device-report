@@ -1,30 +1,6 @@
----
-name: ninja-device-report
-description: Turn a raw NinjaRMM device-list CSV export into a client-presentable XLSX report. Trigger this skill ANY TIME Steve mentions a NinjaRMM export, a device list, a device report, a client-ready device inventory, or uploads a CSV that looks like a Ninja export (columns like "Display Name", "Processors Name", "Volumes", "Memory Capacity GiB"). Also trigger on phrases like "clean up the Ninja export", "make the device list presentable", "prep the devices for the client", or similar. Even if the user doesn't explicitly name the skill, if the input CSV has Ninja's characteristic column layout, use this skill.
----
-
 # Ninja Device Report Cleanup
 
 Converts a raw NinjaRMM device-list CSV export into a client-friendly XLSX report by keeping only the 17 relevant columns and cleaning up the noisy ones (CPU strings, volume strings, OS names, memory rounding).
-
-## When to use
-
-- Steve uploads a CSV exported from NinjaRMM (the default export has 49 columns; look for "Display Name", "Processors Name", "Volumes", "Memory Capacity GiB" as fingerprints)
-- Steve asks to "clean up the Ninja export", "prep the device list for a client", "make the device report presentable", or similar
-- The task involves taking an MSP device inventory and stripping it down to something a client would understand
-
-## How to use
-
-1. Locate the input CSV (check `/mnt/user-data/uploads/` or wherever the user references it).
-2. Run the bundled script:
-
-   ```bash
-   python scripts/clean_ninja_export.py <input.csv> <output.xlsx>
-   ```
-
-   If output path is omitted, the script writes to `<input>_cleaned.xlsx` alongside the input.
-
-3. Move the output to `/mnt/user-data/outputs/` and hand it back to the user with `present_files`.
 
 ## What the script does
 
